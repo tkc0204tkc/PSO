@@ -4,8 +4,10 @@ import random
 import numpy as np
 import copy
 import time
-
-
+import sys
+from tqdm import tqdm
+import pickle
+from portfolio_objectives import stocks_returns_mean, covariance_matrix
 class pso:
     '''
     c_param -> personal parameter
@@ -21,7 +23,7 @@ class pso:
     multi -> multi objective or single objective
     '''
     
-    def __init__(self,att,l_b,u_b,obj_func,constraints=[],c=2.1304,s=1.0575,w=0.4091,pop=156,vm=np.nan,integer=False):
+    def __init__(self,att,l_b,u_b,obj_func,constraints=[],c=2.1304,s=1.0575,w=0.4091,pop=100,vm=np.nan,integer=False):
         if np.isnan(vm):
             vm = np.array([u_b[i]-l_b[i] for i in range(att)])
         if type(vm) != np.ndarray and type(vm) != list:
@@ -37,24 +39,22 @@ class pso:
         self.u_bound = u_b
         self.integer = integer
         self.vmax = vm
-        if type(obj_func)!=list:
-            self.multi = False
-            self.swarm = [particle_single(obj_func,att,constraints,vm,l_b,u_b,integer) for i in range(pop)]
-        else:
-            self.multi = True
-            self.swarm = [particle_multi(obj_func,att,constraints,vm,l_b,u_b,integer) for i in range(pop)]
-            self.comp_swarm = self.swarm
-        if self.multi:
-            self.non_dom_sort()
+        # self.swarm = [particle_multi(obj_func,att,constraints,vm,l_b,u_b,integer) for i in range(pop)]
+        self.swarm = []
+        for i in range(pop):
+            if i < att:
+                self.swarm.append(particle_multi(obj_func, att, constraints, vm, l_b, u_b, integer, init_method=2, extreme_asset=i))
+            elif att <= i < att*2:
+                self.swarm.append(particle_multi(obj_func, att, constraints, vm, l_b, u_b, integer, init_method=1))
+            else:
+                self.swarm.append(particle_multi(obj_func, att, constraints, vm, l_b, u_b, integer))
+
+        self.comp_swarm = self.swarm
+        self.non_dom_sort()
         for part in self.swarm:
             part.init_p_best()
         self.set_g_best()
-        
-    def __repr__(self):
-        if self.multi:
-            return f" The multi objective particle swarm optimizer, with {len(self.swarm)} particles, {len(self.swarm[0].position)} Attributes, {len(self.swarm[0].obj_functions)} objective functions"
-        else:
-            return f" The single objective particle swarm optimizer, with {len(self.swarm)} particles, {len(self.swarm[0].position)} Attributes"
+
         
     def non_dom_sort(self):
         # fast non domination sort
@@ -103,6 +103,7 @@ class pso:
                     Fi_sorted[i].distance = Fi_sorted[i].distance + Fi_sorted[i+1].obj_values[m] - Fi_sorted[i-1].obj_values[m]
                     
     def set_g_best(self):
+        # sys.setrecursionlimit(5000)
         self.g_best = self.swarm[0]
         for part in self.swarm[1:]:
             if part.compare(self.g_best):
@@ -116,28 +117,41 @@ class pso:
         '''
         for partic in self.swarm:
             partic.plot(best_p,x_coord,y_coord)
-        if self.multi:
-            plt.xlabel(r'$f_%2i(x_1,x_2,\dots)$' % x_coord)
-            plt.ylabel(r'$f_%2i(x_1,x_2,\dots)$' % y_coord)
-            plt.title('Pareto Front')
-        else:
-            plt.xlabel(r'$x_%2i$' % x_coord)
-            plt.ylabel(r'$f(x_1,x_2,\dots)$')
-            plt.title('objective value against one attribute')
+
+        plt.xlabel(r'$f_%2i(x_1,x_2,\dots)$' % x_coord)
+        plt.ylabel(r'$f_%2i(x_1,x_2,\dots)$' % y_coord)
+        plt.title('Pareto Front')
         plt.show()
-     
+
+    def plot_3d(self, best_p=True, x_coord =0, y_coord=1, z_coord=2):
+        fig = plt.figure(figsize=(12, 12))
+        ax = fig.add_subplot(projection='3d')
+        sequence_containing_x_vals = []
+        sequence_containing_y_vals = []
+        sequence_containing_z_vals = []
+        for partic in self.swarm:
+            if best_p:
+                sequence_containing_x_vals.append(partic.best_p.obj_values[x_coord])
+                sequence_containing_y_vals.append(partic.best_p.obj_values[y_coord])
+                sequence_containing_z_vals.append(partic.best_p.obj_values[z_coord])
+
+        ax.scatter(sequence_containing_x_vals, sequence_containing_y_vals, sequence_containing_z_vals)
+        plt.xlabel("Expected Return")
+        plt.xlabel("Risk")
+        plt.show()
+
+
+
         
     def moving(self,steps, time_termination):
         t0 = time.time()
-        for i in range(steps):
+        sys.setrecursionlimit(50000)
+        for i in tqdm(range(steps)):
             if time_termination != -1 and time.time()-t0 > time_termination:
                 break
-            if self.multi:
-                # comp_swarm needed to update rank and distance of p_best und g_best
-                # first is global best ; the part and p_best alternating
-                #if self.multi:
-                self.comp_swarm=[]
-                self.comp_swarm.append(self.g_best)
+
+            self.comp_swarm=[]
+            self.comp_swarm.append(self.g_best)
             for part in self.swarm:
                 #calc new velocity
                 r1 = random.random()
@@ -155,55 +169,68 @@ class pso:
                 
                 # stick to bound
                 new_p = np.array([new_p[i] if new_p[i]>self.l_bound[i] else self.u_bound[i] - abs(self.l_bound[i]-new_p[i])%(self.u_bound[i]-self.l_bound[i]) for i in range(len(new_p))])
-                new_p = np.array([new_p[i] if new_p[i]<self.u_bound[i] else self.l_bound[i] + abs(self.u_bound[i]-new_p[i])%(self.u_bound[i]-self.l_bound[i]) for i in range(len(new_p))])               
+                new_p = np.array([new_p[i] if new_p[i]<self.u_bound[i] else self.l_bound[i] + abs(self.u_bound[i]-new_p[i])%(self.u_bound[i]-self.l_bound[i]) for i in range(len(new_p))])
                 
                 part.set_velocity(new_v)
                 part.set_position(new_p)
                 
                 #add to comp_swarm
-                if self.multi:
-                    self.comp_swarm.append(part)
-                    self.comp_swarm.append(part.best_p)
+                self.comp_swarm.append(part)
+                self.comp_swarm.append(part.best_p)
                 
-            if self.multi:
-                self.non_dom_sort()
-                # set g_best with new rank and distance
-                self.g_best = copy.deepcopy(self.comp_swarm[0])
-                j=1
-                new_swarm = self.comp_swarm[1:-1:2]
-                self.swarm = copy.deepcopy(new_swarm)
-                j+=1
+
+            self.non_dom_sort()
+            # set g_best with new rank and distance
+            # print("testing 1")
+            self.g_best = copy.deepcopy(self.comp_swarm[0])
+            # print("testing 2")
+            j=1
+            new_swarm = self.comp_swarm[1:-1:2]
+            self.swarm = copy.deepcopy(new_swarm)
+            # print("testing 3")
+            j+=1
                 
             for part in self.swarm:
-                if self.multi:
-                    #set swarm and p_best with new rank and distance 
-                    part.best_p = copy.deepcopy(self.comp_swarm[j])
-                    j+=2
+
+                #set swarm and p_best with new rank and distance
+                part.best_p = copy.deepcopy(self.comp_swarm[j])
+                j += 2
                 #compare part with g_best
                 if part.compare(self.g_best):
                     self.g_best = copy.deepcopy(part)
                 #update p_best
                 part.compare_p_best()
+
+            # Pareto_Front, Optimal_Solutions = self.get_solution()
+            # print(f"Pareto Front in round {steps} : {Pareto_Front}")
+            # for Optimal_Solution in Optimal_Solutions:
+            #     print(Optimal_Solution.position)
+            #     print(f"expected return = {stocks_returns_mean.T.dot(Optimal_Solution.position)}")
+            #     print(f"objective return = {Optimal_Solution.obj_values[1]}")
+            #     print(f"risk = {(np.array(Optimal_Solution.position).T).dot(covariance_matrix).dot(np.array(Optimal_Solution.position))}")
+            #     print(f"objective risk = {Optimal_Solution.obj_values[0]}")
+            #     print("----------------------------------------------------------------")
+
+
+
                 
                 
     def get_solution(self,whole_particle=False):
         solution = []
-        if self.multi:
-            for part in self.swarm:
-                if part.rank == 0:
-                    if whole_particle:
-                        solution.append(part)
-                    else:
-                        solution.append(part.get_obj_value())
-                if part.best_p.rank == 0 and all(part.position!=part.best_p.position):
-                    if whole_particle:
-                        solution.append(part.best_p)
-                    else:
-                        solution.append(part.best_p.get_obj_value())
-        else:
-            if whole_particle:
-                solution = self.g_best
-            else:
-                solution = self.g_best.get_obj_value()
+        particle = []
+        # if self.multi:
+        for part in self.swarm:
+            if part.rank == 0:
+                if whole_particle:
+                    solution.append(part)
+                else:
+                    solution.append(part.get_obj_value())
+                    particle.append(part)
+            if part.best_p.rank == 0 and all(part.position != part.best_p.position):
+                if whole_particle:
+                    solution.append(part.best_p)
+                else:
+                    solution.append(part.best_p.get_obj_value())
+                    particle.append(part.best_p)
                 
-        return solution 
+        return solution, particle

@@ -1,0 +1,31 @@
+Initialization population:
+for each particle i in pop:
+        set position randomly
+        evaluate objectives value and constraints as penalty
+        perform non-dominated sorting on all particles to assign ranks and crowding distances
+        store the best solution to g_best with rank 0 and highest crowding distance
+
+
+Moving particles:
+for i in range(steps):
+        for each particle i in pop:
+            update velocity: v_i = w * v_i + c * rand() * (p_best_i - x_i) + s * rand() * (g_best - x_i)
+            update position: x_i = x_i + v_i
+            if  l_bound <= updated position <= u_bound:
+                Set new position = update position
+            else:
+                 if update position > u_bound:
+                    set new position = u_bound – (update position – u_bound)%(u_bound – l_bound)                        
+                 elif update position < l_bound:
+                    set new position = l_bound + (l_bound – update position)%(u_bound – l_bound)
+
+        do non-dominated sorting on the new pop
+        get p_best
+        update g_best if p_best dominates g_best
+
+
+
+
+
+
+

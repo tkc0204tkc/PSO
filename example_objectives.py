@@ -13,7 +13,7 @@ def objective(prob):
     
     def f2(x):
         return (x[0]-5)**2+(x[1]-5)**2
-    
+
     def g1(x):
         g = (x[0]-5)**2 + x[1]**2 - 25
         return g if g > 0 else 0
